@@ -44,7 +44,7 @@ k_ = {
 
 # index/lenght * 100
 def PERCENT(x, y):
-    return float(x) / float(y) * 100
+    return lambda x, y: float(x) / float(y) * 100
 
 
 services = {
@@ -191,205 +191,260 @@ def request(domain, proxy, timeout, user_agent):
             verify=False,
             allow_redirects=redirect,
             timeout=int(timeout) if timeout is not None else None,
-            proxies=proxies if proxy is not None else None,
+            proxies=proxies,
         )
         return req.status_code, req.content
-    except requests.exceptions.ProxyError:
-        warn("Invalid Proxy (Format: http(s)://host:port)")
-    except requests.exceptions.ReadTimeout:
-        info("Read Timeout!")
-    except requests.exceptions.ConnectionError:
-        info("Connection Error!")
     except Exception:
         pass
+        # if k_.get("d_list"):
+        # print("")
+        # warn("Failed to establish a new connection for: %s" % (domain), 1)
+        # else:
+        # warn("Failed to establish a new connection for: %s" % (domain), 1)
 
 
-def _print(a, l, _d_):
-    plus("{0} ({1:.2f}%)".format(_d_, PERCENT(int(a), int(l))))
+def find(status, content, ok):
+    for service in services:
+        for values in services[service].items():
+            if (
+                re.findall(str(values[1]), str(content), re.I)
+                and int(status) in range(201 if ok is False else 200, 599)
+                and "nginx" not in str(content)
+                and "openresty"
+                not in str(content)  # avoid false positives (Cargo mainly)
+            ):
+                return str(service), str(values[1])
 
 
-def match(error, data):
-    rgx = re.compile(r"{0}".format(error))
-    try:
-        return rgx.search(data.decode("utf-8", "ignore").strip())
-    except Exception:
-        pass
+def banner():
+    print("\n   /~\\")
+    print("  C oo   ---------------")
+    print(" _( ^)  |T|A|K|E|O|V|E|R|")
+    print("/   ~\\  ----------------")
+    print("#> by M'hamed (@m4ll0k) Outaadi")
+    print("#> http://github.com/m4ll0k")
+    print("#> fork http://github.com/edoardottt")
+    print("-" * 40)
+    print()
+    warn("CHECK AT https://github.com/m4ll0k/takeover IF THE BANNERS WERE UPDATED !")
+    print()
 
 
-def check(_url):
-    try:
-        if "http://" not in _url and "https://" not in _url:
-            _url = "http://{0}".format(_url)
-        domain = urllib.parse.urlparse(_url).netloc
-        return domain
-    except Exception:
-        pass
+def help(_exit_=False):
+    banner()
+    print("Usage: %s [OPTION]\n" % sys.argv[0])
+    print("\t-d\tSet domain URL (e.g: www.test.com)")
+    print("\t-t\tSet threads, default 1")
+    print("\t-l\tScan multiple targets in a text file")
+    print("\t-p\tUse a proxy to connect the target URL")
+    print("\t-o\tUse this settings for save a file, args=json or text")
+    print("\t-T\tSet a request timeout,default value is 20 seconds")
+    print("\t-k\tProcess 200 http code, cause more false positive")
+    print("\t-u\tSet custom user agent (e.g: takeover-bot)")
+    print("\t-v\tVerbose, print more info\n")
+    if _exit_:
+        sys.exit()
 
 
-def checkurl(_url):
-    try:
-        if "http://" not in _url and "https://" not in _url:
-            _url = "http://{0}".format(_url)
-        return _url
-    except Exception:
-        pass
-
-
-def output(data, filename, mode):
-    global _output
-    if filename is not None:
-        with open(filename, mode) as file:
-            file.write("{0}\n".format(data))
+def checkpath(path):
+    if os.path.exists(path):
+        return path
+    elif os.path.isdir(path):
+        warn('"%s" is directory!', 1)
+    elif os.path.exists(path) is False:
+        warn('"%s" not exists!' % path, 1)
     else:
-        _output.append(data)
+        warn('Error in: "%s"' % path, 1)
 
 
-def runner(index, domains, proxy, timeout, user_agent, process):
-    for _d_ in domains:
-        if process:
-            _print(index[0], index[1], _d_)
-        try:
-            status_code, content = request(_d_, proxy, timeout, user_agent)
-            if status_code != 200:
-                pass
-            else:
-                for service, values in services.items():
-                    _ = match(values["error"], content)
-                    if _:
-                        output("[TAKEOVER]: {0} -> {1}".format(_d_, service), k_["output"], "a")
-                        if k_["verbose"]:
-                            err(_.group(0))
-        except Exception:
-            pass
-        index[0] += 1
+def readfile(path):
+    info('Read wordlist... "%s"' % path)
+    return [x.strip() for x in open(checkpath(path), "r")]
 
 
-def f_thread(domains, threads, proxy, timeout, user_agent, process):
-    split = lambda lst, sz: [lst[i : i + sz] for i in range(0, len(lst), sz)]
-    index = [1, len(domains)]
-    domains = split(domains, int(len(domains) / int(threads)))
-    with thread.ThreadPoolExecutor(max_workers=int(threads)) as executor:
-        future_to = {
-            executor.submit(
-                runner, index, domains[index], proxy, timeout, user_agent, process
-            ): index
-            for index in range(len(domains))
-        }
-        for future in thread.as_completed(future_to):
-            future_to[future]
-            try:
-                future.result()
-            except Exception:
-                pass
+def checkurl(url):
+    o = urllib.parse.urlsplit(url)
+    if o.scheme not in ["http", "https", ""]:
+        warn('Scheme "%s" not supported!' % o.scheme, 1)
+    if o.netloc == "":
+        return "http://" + o.path
+    elif o.netloc:
+        return o.scheme + "://" + o.netloc
+    else:
+        return "http://" + o.netloc
+
+
+def print_(string):
+    sys.stdout.write("\033[1K")
+    sys.stdout.write("\033[0G")
+    sys.stdout.write(string)
+    sys.stdout.flush()
+
+
+def runner(k):
+    threadpool = thread.ThreadPoolExecutor(max_workers=k.get("threads"))
+    if k.get("verbose"):
+        info("Set %s threads.." % k.get("threads"))
+    futures = (
+        threadpool.submit(
+            requester,
+            domain,
+            k.get("proxy"),
+            k.get("timeout"),
+            k.get("user_agent"),
+            k.get("output"),
+            k.get("process"),
+            k.get("verbose"),
+        )
+        for domain in k.get("domains")
+    )
+    for i, _ in enumerate(thread.as_completed(futures)):
+        if k.get("verbose") and k.get("d_list"):
+            str_ = "{i}{b:.2f}% Domain: {d}".format(
+                i=_info(),
+                b=PERCENT(int(i), int(k.get("dict_len"))),
+                d=k.get("domains")[i],
+            )
+            print_(str_)
+        # else:
+        # info("Domain: {}".format(k.get("domains")[i]))
+        pass
+
+
+def requester(domain, proxy, timeout, user_agent, output, ok, v):
+    code, html = request(domain, proxy, timeout, user_agent)
+    service, error = find(code, html, ok)
+    if service and error:
+        if output:
+            _output.append((domain, service, error))
+            if v and not k_.get("d_list"):
+                plus(
+                    "%s service found! Potential domain takeover found! - %s"
+                    % (service, domain)
+                )
+            elif v and k_.get("d_list"):
+                print("")
+                plus(
+                    "%s service found! Potential domain takeover found! - %s"
+                    % (service, domain)
+                )
+        else:
+            if k_.get("d_list"):
+                print("")
+                plus(
+                    "%s service found! Potential domain takeover found! - %s"
+                    % (service, domain)
+                )
+            elif not k_.get("d_list"):
+                plus(
+                    "%s service found! Potential domain takeover found! - %s"
+                    % (service, domain)
+                )
+            if v:
+                err(error)
+
+
+def savejson(path, content, v):
+    if v and not k_.get("d_list"):
+        info("Writing file..")
+    elif v and k_.get("d_list"):
+        print("")
+        info("Writing file..")
+    a = {}
+    b = {"domains": {}}
+    for i in content:
+        a.update({i[0]: {"service": i[1], "error": i[2]}})
+    b["domains"] = a
+    with open(path, "w+") as outjsonfile:
+        json.dump(b, outjsonfile, indent=4)
+        outjsonfile.close()
+    info("Saved at " + path + "..")
+
+
+def savetxt(path, content, v):
+    if v and not k_.get("d_list"):
+        info("Writing file..")
+    elif v and k_.get("d_list"):
+        print("")
+        info("Writing file..")
+    br = "-" * 40
+    bf = "=" * 40
+    out = "" + br + "\n"
+    for i in content:
+        out += "Domain\t: %s\n" % i[0]
+        out += "Service\t: %s\n" % i[1]
+        out += "Error\t: %s\n" % i[2]
+        out += "" + bf + "\n"
+    out += "" + br + "\n"
+    with open(path, "w+") as outtxtfile:
+        outtxtfile.write(out)
+        outtxtfile.close()
+    info("Saved at " + path + "..")
 
 
 def main():
-    global k_
+    # --
     if len(sys.argv) < 2:
-        print(
-            """{0}Subdomain Takeover{1}
-Usage:
-  python3 takeover.py [options]
-
-Options:
-  -d domain        Set domain to test
-  -t threads       Set threads number (default: 1)
-  -l file          Set list of domains
-  -p proxy         Set proxy (example: http(s)://host:port)
-  -o output        Set filename to save output
-  -T timeout       Set request timeout
-  -k               Enable percentage process
-  -u user_agent    Set User-Agent (default: browser)
-  -v               Set verbose mode
-  -h               Show this help message
-        """.format(
-                y_, e
-            )
-        )
+        help(1)
     try:
         opts, _ = getopt.getopt(
             sys.argv[1:],
-            "d:t:l:p:o:T:k:u:vh",
-            [
-                "domain=",
-                "threads=",
-                "list=",
-                "proxy=",
-                "output=",
-                "timeout=",
-                "process",
-                "user_agent=",
-                "verbose",
-            ],
+            "d:l:p:o:t:T::u:kv",
+            ["d=", "l=", "p=", "v", "o=", "t=", "T=", "u=", "k"],
         )
-    except getopt.GetoptError as err:
-        warn("{0}".format(err))
-        sys.exit()
+    except Exception as e:
+        warn(e, 1)
     for o, a in opts:
-        if o in ("-d", "--domain"):
+        if o == "-d":
             k_["domain"] = a
-        elif o in ("-t", "--threads"):
-            k_["threads"] = a
-        elif o in ("-l", "--list"):
+        if o == "-t":
+            k_["threads"] = int(a)
+        if o == "-l":
             k_["d_list"] = a
-        elif o in ("-p", "--proxy"):
+        if o == "-p":
             k_["proxy"] = a
-        elif o in ("-o", "--output"):
+        if o == "-o":
             k_["output"] = a
-        elif o in ("-T", "--timeout"):
-            k_["timeout"] = a
-        elif o in ("-k", "--process"):
+        if o == "-T":
+            k_["timeout"] = int(a)
+        if o == "-k":
             k_["process"] = True
-        elif o in ("-u", "--user_agent"):
+        if o == "-u":
             k_["user_agent"] = a
-        elif o in ("-v", "--verbose"):
+        if o == "-v":
             k_["verbose"] = True
-        elif o in ("-h"):
-            print(
-                """{0}Subdomain Takeover{1}
-Usage:
-  python3 takeover.py [options]
 
-Options:
-  -d domain        Set domain to test
-  -t threads       Set threads number (default: 1)
-  -l file          Set list of domains
-  -p proxy         Set proxy (example: http(s)://host:port)
-  -o output        Set filename to save output
-  -T timeout       Set request timeout
-  -k               Enable percentage process
-  -u user_agent    Set User-Agent (default: browser)
-  -v               Set verbose mode
-  -h               Show this help message
-        """.format(
-                    y_, e
-                )
-            )
-            sys.exit()
-    try:
-        if k_["domain"] is not None and k_["d_list"] is None:
-            domains = [k_["domain"]]
-        elif k_["domain"] is None and k_["d_list"] is not None:
-            domains = open(k_["d_list"], "r").read().strip().split("\n")
-            k_["dict_len"] = len(domains)
-        elif k_["domain"] is not None and k_["d_list"] is not None:
-            domains = [k_["domain"]]
+    if k_.get("domain") or k_.get("d_list"):
+        banner()
+        domains = []
+        if k_.get("verbose"):
+            info("Starting..")
+
+        if k_.get("d_list"):
+            domains.extend(readfile(k_.get("d_list")))
         else:
-            warn("Set --domain or --list options!", exit=1)
-        f_thread(
-            domains,
-            k_["threads"],
-            k_["proxy"],
-            k_["timeout"],
-            k_["user_agent"],
-            k_["process"],
-        )
-    except KeyboardInterrupt:
-        warn("Stopped!", exit=1)
-    except IOError:
-        warn("File not found!")
+            domains.append(k_.get("domain"))
+        k_["domains"] = domains
+        k_["dict_len"] = len(domains)
+        runner(k_)
+        if k_.get("output"):
+            if ".txt" in k_.get("output"):
+                savetxt(k_.get("output"), _output, k_.get("verbose"))
+            elif ".json" in k_.get("output"):
+                savejson(k_.get("output"), _output, k_.get("verbose"))
+            else:
+                warn(
+                    "Output Error: %s extension not supported, only .txt or .json"
+                    % k_.get("output").split(".")[1],
+                    1,
+                )
+    elif k_.get("domain") is None and k_.get("d_list") is None:
+        help(1)
 
 
 if __name__ == "__main__":
-    main()
-
+    try:
+        main()
+    except (KeyboardInterrupt) as e:
+        print(e)
+        sys.exit(0)
