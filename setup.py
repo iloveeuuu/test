@@ -5,7 +5,7 @@ setup(
     version="0.1",
     description="Sub-Domain TakeOver Vulnerability Scanner",
     url="https://github.com/iloveeuuu/test.git",
-    author="m4ll0k",
+    author="iloveeuuu",
     author_email="mrleechunsan@hotmail.com",
     license="MIT",
     scripts=["takeover.py"],
